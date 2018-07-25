@@ -7,9 +7,12 @@ sys.path.insert(0, config.mxnet_path)
 import mxnet as mx
 from core.scheduler import multi_factor_scheduler
 from core.solver import Solver
+from utils.sanity_check import sanity_check
 from data import *
 from symbol import *
 
+sys.path.append('/mnt/truenas/scratch/chenxia.han/')
+import memonger
 
 def main(config):
     # log file
@@ -53,9 +56,18 @@ def main(config):
                                       filter_list=config.filter_list,
                                       num_classes=config.num_classes,
                                       data_type=config.dataset,
-                                      bottle_neck=config.bottle_neck)
+                                      bottle_neck=config.bottle_neck,
+                                      memonger=config.memonger)
     elif config.network == 'vgg16' or config.network == 'mobilenet' or config.network == 'shufflenet':
         symbol = eval(config.network)(num_classes=config.num_classes)
+
+    # sanity check
+    single_card_input_shape = sanity_check(symbol, train,
+                                           config.batch_size / len(config.gpu_list))
+
+    # memonger
+    if config.memonger:
+        symbol = memonger.search_plan(symbol, **single_card_input_shape)
 
     # train
     epoch_size = max(int(num_examples / config.batch_size / kv.num_workers), 1)
@@ -90,6 +102,7 @@ def main(config):
     if config.retrain:
         _, arg_params, aux_params = mx.model.load_checkpoint("model/{}".format(config.model_load_prefix),
                                                              config.model_load_epoch)
+    allow_missing = config.allow_missing
     solver.fit(train_data=train,
                eval_data=val,
                eval_metric=eval_metric,
@@ -98,6 +111,7 @@ def main(config):
                initializer=initializer,
                arg_params=arg_params,
                aux_params=aux_params,
+               allow_missing=allow_missing,
                optimizer=optimizer,
                optimizer_params=optimizer_params,
                begin_epoch=config.begin_epoch,
